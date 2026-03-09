@@ -1739,7 +1739,28 @@ static void __generate_crypto(const sdp_ng_flags *flags, struct call_media *this
 			/* our own offered tags will be higher than the ones we received */
 			if (cps->tag >= c_tag)
 				c_tag = cps->tag + 1;
-			crypto_params_copy(&cps->params, &offered_cps->params, 1);
+
+			/* if sdes_static is set and we already have a matching crypto suite
+			 * from a previous offer, reuse the original keys instead of copying
+			 * the new ones from the other side. This prevents SRTP key changes
+			 * during re-INVITEs (e.g. MoH) from reaching the endpoint. */
+			bool reused_orig = false;
+			if (flags->sdes_static) {
+				for (__auto_type ol = cpq_orig.head; ol; ol = ol->next) {
+					struct crypto_params_sdes *orig_cps = ol->data;
+					if (orig_cps->params.crypto_suite
+							== offered_cps->params.crypto_suite) {
+						crypto_params_copy(&cps->params, &orig_cps->params, 1);
+						ilogs(crypto, LOG_DEBUG,
+							"SDES-static: reusing original crypto keys for %s in offer",
+							orig_cps->params.crypto_suite->name);
+						reused_orig = true;
+						break;
+					}
+				}
+			}
+			if (!reused_orig)
+				crypto_params_copy(&cps->params, &offered_cps->params, 1);
 
 			/* we use a bit field to keep track of which types we've seen here */
 			types_offered |= 1 << cps->params.crypto_suite->idx;

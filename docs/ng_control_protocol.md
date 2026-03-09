@@ -806,8 +806,12 @@ Optionally included keys are:
 
 		Instructs *rtpengine* to skip the full SDES negotiation routine during a re-invite
 		(e.g. pick the first support crypto suite, look for possible SRTP passthrough)
-		and instead leave the previously negotiated crypto suite in place. Only useful in
-		subsequent `answer` messages and ignored in `offer` messages.
+		and instead leave the previously negotiated crypto suite in place. In `answer`
+		messages the previously negotiated suite is left untouched. In `offer` messages, if
+		a matching crypto suite was already negotiated, its original keys are reused instead
+		of forwarding newly offered keys, so that a re-keying re-invite (e.g. an endpoint
+		starting Music-on-Hold) does not change the SRTP keys seen by the far side. Useful
+		with endpoints that reject a mid-dialog key change.
 
 	- `prefer`
 
