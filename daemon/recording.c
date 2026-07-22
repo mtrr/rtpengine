@@ -686,6 +686,8 @@ static void rec_pcap_meta_discard_file(call_t *call) {
 
 	unlink(recording->pcap.recording_path);
 	unlink(recording->pcap.meta_filepath);
+
+	mutex_destroy(&recording->pcap.recording_lock);
 	g_clear_pointer(&recording->pcap.meta_filepath, free);
 }
 
@@ -699,9 +701,11 @@ static char *recording_open_pcap_file(struct recording *recording, char *path) {
 
 	recording->pcap.recording_pd = pcap_open_dead(rec_pcap_format->linktype, 65535);
 	recording->pcap.recording_pdumper = pcap_dump_open(recording->pcap.recording_pd, path);
+
 	if (recording->pcap.recording_pdumper == NULL) {
 		pcap_close(recording->pcap.recording_pd);
 		recording->pcap.recording_pd = NULL;
+		recording->pcap.recording_path = NULL;
 		ilog(LOG_INFO, "Failed to write recording file: %s", path);
 	} else {
 		ilog(LOG_INFO, "Writing recording file: %s", path);
@@ -830,6 +834,8 @@ static void response_pcap(struct recording *recording, const ng_parser_t *parser
 	if (!recording)
 		return;
 	if (!recording->pcap.recording_path)
+		return;
+	if (!recording->pcap.recording_pdumper)
 		return;
 
 	parser_arg recordings = parser->dict_add_list(output, "recordings");
@@ -1000,17 +1006,21 @@ static void sdp_after_proc(struct recording *recording, const str *sdp, struct c
 
 static void finish_proc(call_t *call, bool discard) {
 	struct recording *recording = call->recording;
-	if (!kernel.is_open)
-		return;
-	if (recording->proc.call_idx != UNINIT_IDX) {
+
+	if (kernel.is_open && recording->proc.call_idx != UNINIT_IDX)
 		kernel_del_call(recording->proc.call_idx);
-		recording->proc.call_idx = UNINIT_IDX;
-	}
+
+	recording->proc.call_idx = UNINIT_IDX;
+
 	for (__auto_type l = call->streams.head; l; l = l->next) {
 		struct packet_stream *ps = l->data;
 		ps->recording.proc.stream_idx = UNINIT_IDX;
 	}
 
+	if (!recording->proc.meta_filepath)
+		return;
+
+	/* rename / unlink / free */
 	const char *unlink_fn = recording->proc.meta_filepath;
 	g_autoptr(char) discard_fn = NULL;
 	if (discard) {
@@ -1047,6 +1057,8 @@ static void setup_stream_proc(struct packet_stream *stream) {
 	if (!recording)
 		return;
 	if (!kernel.is_open)
+		return;
+	if (recording->proc.call_idx == UNINIT_IDX)
 		return;
 	if (stream->recording.proc.stream_idx != UNINIT_IDX)
 		return;
